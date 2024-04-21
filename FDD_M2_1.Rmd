@@ -1,0 +1,352 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+```{r}
+#stuff
+library(tidyverse)
+library(MASS)
+library(pROC)
+library(ggplot2)
+library(broom)
+library(corrplot)
+library(GGally)
+library(ROCR)
+#ML 
+library(caret)
+#pls 
+library(pls)
+#rf
+library(randomForest)
+
+#arbre
+library(tree)
+library(rpart) 
+library(rpart.plot)
+library(ipred) 
+#knn 
+library(class)
+```
+L'objectif de notre analyse est de réussir à comprendre le churn dans la banque, nous aimerions à terme réussir à prevenir ce phénomène en étant capable de détecter en amont un client qui souhaite partir. 
+
+```{r}
+#https://www.kaggle.com/datasets/radheshyamkollipara/bank-customer-churn
+data <- read.csv('C:/Users/hosfa/Downloads/Customer-Churn-Records.csv', stringsAsFactors = T)
+data <- data[, !(names(data) %in% c("RowNumber", "CustomerId", "Surname", "Complain"))]
+
+# complain est 100% corrélé 
+ 
+```
+
+```{r}
+data$Exited <- as.factor(data$Exited) # cible
+data$IsActiveMember <- as.factor(data$IsActiveMember)
+data$Satisfaction.Score <- as.factor(data$Satisfaction.Score)
+data$HasCrCard <- as.factor(data$HasCrCard)
+data$CreditScore <- as.factor(data$Satisfaction.Score)
+data$NumOfProducts <- as.factor(data$NumOfProducts)
+```
+
+```{r}
+summary(data)
+#tenure = durée de vie du compte
+```
+
+
+```{r}
+#Stats pour variables quali
+GGally::ggbivariate(data, 
+                    "Exited",
+                    explanatory = c("Geography", "Gender", "HasCrCard", "IsActiveMember",      "Satisfaction.Score", "Card.Type", "NumOfProducts"))
+
+```
+Germany 32% de churn
+Not active member 27% de churn
+Female 25% de churn (+10% de que les male)
+100% des clients avec numofproducts = 4 ont churn 
+
+
+
+
+# Churn - pays 
+
+```{r}
+# proportion de clients par pays 
+prop.table(table(data$Geography))*100
+```
+```{r}
+table(data$Geography,data$Exited)
+```
+
+# Churn - NumOfProducts 
+```{r}
+# proportion de clients par NumOfProducts 
+prop.table(table(data$NumOfProducts))*100
+```
+
+60 sur 10K clients ont churn avec un product_number = 4, il est sûrement préférable d'écarter cette catégorie du df.
+
+```{r}
+#tenure
+ggplot(data, aes(x=Exited, y=Tenure)) +
+  geom_boxplot() +
+  labs(title="Boxplot of Churn by Tenure",
+       x="Churn",
+       y="Tenure") +
+  theme_minimal()
+
+#age
+ggplot(data, aes(x=Exited, y=Age)) +
+  geom_boxplot() +
+  labs(title="Boxplot of Churn by Age",
+       x="Churn",
+       y="Age") +
+  theme_minimal()
+
+#balance
+ggplot(data, aes(x=Exited, y=Balance)) +
+  geom_boxplot() +
+  labs(title="Boxplot of Churn by Balance",
+       x="Churn",
+       y="Balance") +
+  theme_minimal()
+#estimedsalary
+ggplot(data, aes(x=Exited, y=EstimatedSalary)) +
+  geom_boxplot() +
+  labs(title="Boxplot of Churn by EstimatedSalary",
+       x="Churn",
+       y="EstimatedSalary") +
+  theme_minimal()
+
+#pointearned
+ggplot(data, aes(x=Exited, y=Point.Earned)) +
+  geom_boxplot() +
+  labs(title="Boxplot of Churn by Point.Earned",
+       x="Churn",
+       y="Point.Earned") +
+  theme_minimal()
+
+```
+Les clients + âgé ont + tendance à churn, peut être qu'ils ont finis leur prêt, peut-être ils sont morts ?  
+
+Ceux avec churn = 0 -> balance + faible (contre intuitif)
+ils sont peut-être là pour les points/avantages/prêts ? 
+
+```{r}
+data_numeric <- data[sapply(data, is.numeric)]
+matrice_cor <- cor(data_numeric)
+corrplot(matrice_cor, method = "color", type = "upper", 
+         tl.col = "black", tl.srt = 45, addCoef.col = "black")
+```
+Il n'y a pas de corrélations problématiques ici 
+
+#Echantillonnage 
+```{r}
+data <- data[!data$NumOfProducts == 4,]
+data_scaled <- data  
+numeric_columns <- sapply(data, is.numeric)  
+data_scaled[numeric_columns] <- scale(data[numeric_columns])  
+
+
+set.seed(123)  # Pour la reproductibilité
+index <- createDataPartition(data_scaled$Exited, p=0.8, list=FALSE)
+training_data <- data_scaled[index, ]
+testing_data <- data_scaled[-index, ]
+
+cat("Proportion de la variable cible sur le jeu d'apprentissage")
+prop.table(table(training_data$Exited))
+
+cat("\nProportion de la variable cible sur le jeu de test")
+prop.table(table(testing_data$Exited))
+
+
+```
+
+
+# Regression logistique
+# KNN
+
+
+# DT
+```{r}
+tree1<-rpart(Exited~., 
+             data=training_data,
+             method = "class")
+##arbre avec un noeud racine (node 1) de 7000 observations
+##noeud 2) sa r?gle de scission "split" est balance <1788, le nbre d'indiv. dans ce noeud est 6779
+#le nbre "loss" d'indiv ne correpondant pas ? la classe majoritaire est 119, la valeur "yvar"
+#est la classe majoritaire NO et les probas d'appartenance ? chaque classe entre parenth?ses
+tree1
+rpart.plot(tree1)
+plotcp(tree1)
+
+```
+
+
+```{r}
+##cp=0 
+tree2 <- rpart(Exited~.,
+          data=training_data,
+          method = "class",
+          control=list(cp=0, xval=10)
+)
+plotcp(tree2)
+abline(v=4, lty="dashed")
+tree2$cptable
+rpart.plot(tree2)
+```
+
+```{r}
+##prediction
+tree1test<-predict(tree1, type="prob",testing_data )
+pred<-prediction(tree1test[,2], testing_data$Exited)
+auc<-performance(pred,"auc")
+auc@y.values[[1]] 
+
+
+tree2test<-predict(tree2, type="prob",testing_data )
+pred2<-prediction(tree2test[,2], testing_data$Exited)
+auc2<-performance(pred2,"auc")
+auc2@y.values[[1]] 
+```
+# Random Forest
+```{r}
+set.seed(123)
+rf1<-randomForest(Exited~., data=training_data, 
+                 ntree=500, 
+                 MTRY=4,
+                 replace=T,
+                 nodesize=T,
+                 keep.forest=TRUE,
+                 importance = T
+                 )
+rf1
+```
+
+# Importance des variables 
+```{r}
+importance(rf1,type=1)[order(importance(rf1,type=1), decreasing= T),]
+```
+
+```{r}
+varImpPlot(rf1)
+```
+
+# Tuning mtry 
+```{r}
+mtry <- tuneRF(x = training_data[,-11], y = training_data[,11], mtryStart = 1, ntreeTry = 500, stepFactor = 2, improve = 0.001)
+```
+
+```{r}
+best.m <- mtry[which.min(mtry[,2]),1]
+best.m
+```
+
+# Recherche du nombre d'arbre optimal
+```{r}
+plot(rf1$err.rate[, 1], type = "l", xlab = "nombre d'arbres", ylab = "erreur OOB")
+```
+
+```{r}
+min_error_index <- which.min(rf1$err.rate[, 1])
+min_trees <- min_error_index  
+min_error <- rf1$err.rate[min_error_index, 1]
+
+cat("Le nombre optimal d'arbres est :", min_trees, "avec une erreur OOB de :", min_error, "\n")
+
+```
+
+# Erreurs 
+```{r}
+##comparer erreur OOB avec erreur apprentissage
+trainrf<-predict(rf1, training_data[, -11],type='response')
+err_train<-sum(trainrf!=training_data$Exited)
+err_train
+```
+
+```{r}
+##comparer avec erreur test
+testrf<-predict(rf1, testing_data[,-11],type='response')
+err_test<-sum(testrf!=testing_data$Exited)
+err_test
+
+
+```
+
+# AUC TRAIN 
+```{r}
+
+trainrf<- predict(rf1, training_data, type="prob")[,2]
+pred1 <- ROCR::prediction(trainrf , training_data$Exited)
+Perf1 = performance(pred1, "tpr", "fpr")
+perf_auc1 <- ROCR::performance(pred1,"auc")
+AUC_TRAIN <- round(perf_auc1@y.values[[1]],2)
+
+
+```
+
+
+# AUC TEST
+```{r}
+testrf <- predict(rf1,testing_data, type="prob")[,2]
+pred2 <- ROCR::prediction(testrf, testing_data$Exited)
+Perf2 = performance(pred2, "tpr", "fpr")
+perf_auc2 <- ROCR::performance(pred2,"auc")
+AUC_TEST <- round(perf_auc2@y.values[[1]],2)
+
+```
+
+```{r}
+par(mfrow = c(1, 2))
+plot(Perf1, colorize = TRUE, main = paste("Roc Apprentissage (AUC =", AUC_TRAIN, ")"))
+plot(Perf2, colorize = TRUE, main = paste("Roc Test (AUC =", AUC_TEST, ")"))
+```
+
+
+
+# Bagging DT 
+```{r}
+
+set.seed(123)
+
+default_bag1 <- bagging(
+  Exited~., 
+  data=training_data,
+  coob    = TRUE
+)
+default_bag1
+
+
+```
+
+
+```{r}
+ntree <- 10:50
+
+ooberr <- vector(mode = "numeric", length = length(ntree))
+
+for (i in seq_along(ntree)) {
+  set.seed(123)
+  # perform bagged model
+  default_bag2 <- bagging(
+    Exited~., 
+    data=training_data,
+    coob    = TRUE,
+    nbagg   = ntree[i]
+  )
+  ooberr[i] <- default_bag2$err
+}
+
+plot(ntree, ooberr, type = 'l', lwd = 2)
+abline(v = 25, col = "red", lty = "dashed")
+```
+
+
+```{r}
+##predication
+deflt_test<-predict(default_bag2,testing_data, type="prob", aggregation = "majority")[,2]
+pred<-prediction(deflt_test, testing_data$Exited)
+auc<-performance(pred,"auc")
+auc@y.values[[1]]
+```
+
